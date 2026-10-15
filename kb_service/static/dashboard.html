@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG 知识库观测台</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #1a1d27; --border: #2a2e3d; --text: #e6e8ee;
+    --dim: #8b90a3; --accent: #5b8def; --green: #3fb27f; --red: #e05d5d; --amber: #d9a03f;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 18px; margin-bottom: 16px; }
+  h1 .sub { color: var(--dim); font-size: 12px; font-weight: normal; margin-left: 8px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14px; margin-bottom: 12px; color: var(--accent); }
+  .status { display: flex; gap: 24px; flex-wrap: wrap; }
+  .stat .label { color: var(--dim); font-size: 12px; }
+  .stat .value { font-size: 20px; font-weight: 600; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.on { background: var(--green); } .dot.off { background: var(--red); }
+  .row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  input, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  input:focus { outline: 1px solid var(--accent); }
+  #q { flex: 1; min-width: 240px; }
+  #scopes { width: 220px; }
+  #topk { width: 70px; }
+  button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--dim); }
+  button.danger { background: transparent; border: 1px solid var(--red); color: var(--red); padding: 2px 10px; font-size: 12px; }
+  button:hover { opacity: .85; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--dim); font-weight: normal; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .hit { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--bg); }
+  .hit .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .hit .title { font-weight: 600; }
+  .badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--dim); }
+  .badge.score-hi { color: var(--green); border-color: var(--green); }
+  .badge.score-mid { color: var(--amber); border-color: var(--amber); }
+  .badge.score-lo { color: var(--red); border-color: var(--red); }
+  .badge.ns-global { color: var(--accent); border-color: var(--accent); }
+  .hit .snippet { color: var(--dim); margin-top: 6px; white-space: pre-wrap; word-break: break-all; }
+  .hit .meta { display: none; margin-top: 8px; font-size: 12px; color: var(--dim); background: var(--panel); padding: 8px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+  .hit.open .meta { display: block; }
+  .hit .toggle { cursor: pointer; color: var(--accent); font-size: 12px; margin-left: auto; }
+  .dim { color: var(--dim); }
+  .err { color: var(--red); }
+  .mono { font-family: Consolas, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>RAG 知识库观测台 <span class="sub">kb_service 独立界面 · 数据每 5s 自动刷新</span></h1>
+
+<div class="panel">
+  <h2>服务状态</h2>
+  <div class="status" id="status"><span class="dim">加载中…</span></div>
+</div>
+
+<div class="panel">
+  <h2>检索台</h2>
+  <div class="row">
+    <input id="q" placeholder="输入查询, 用语义自然的说法即可, 如: 买的东西不想要了怎么退">
+    <input id="scopes" value="global" title="逗号分隔, 如 global,chat:web-xxx">
+    <input id="topk" type="number" value="5" min="1" max="20" title="top_k">
+    <button onclick="doRetrieve()">检索</button>
+  </div>
+  <div class="row dim" style="font-size:12px">scopes 逗号分隔; 会话资料用 chat:&lt;chat_id&gt;; 分数 = 查询与片段的 cosine 相似度(越接近 1 越相关)</div>
+  <div id="results"></div>
+</div>
+
+<div class="panel">
+  <h2>文档管理</h2>
+  <div class="row">
+    <select id="docScope" onchange="loadDocs()">
+      <option value="">全部 scope</option>
+      <option value="global">global</option>
+    </select>
+    <button class="ghost" onclick="loadDocs()">刷新</button>
+    <button class="ghost" onclick="doScan()">扫描 knowledge/ 目录</button>
+    <span id="scanMsg" class="dim" style="font-size:12px"></span>
+  </div>
+  <table>
+    <thead><tr><th>文档</th><th>scope</th><th>collection</th><th>块数</th><th>字符数</th><th>更新时间</th><th></th></tr></thead>
+    <tbody id="docs"></tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>最近操作日志 <span class="dim" style="font-size:12px;font-weight:normal">(内存环形缓冲, 含 agent 发起的真实查询与记忆写入)</span>
+    <select id="qtype" style="margin-left:8px;font-size:12px">
+      <option value="">全部类型</option>
+      <option value="retrieve">检索</option>
+      <option value="remember">记忆写入</option>
+    </select>
+  </h2>
+  <table>
+    <thead><tr><th>时间</th><th>类型</th><th>查询</th><th>scopes</th><th>命中</th></tr></thead>
+    <tbody id="queries"></tbody>
+  </table>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtTime = (ts) => new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false });
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+function scoreBadge(score) {
+  if (score === null || score === undefined) return '<span class="badge">score: n/a</span>';
+  const cls = score >= 0.6 ? "score-hi" : score >= 0.45 ? "score-mid" : "score-lo";
+  return `<span class="badge ${cls}">score: ${score.toFixed(3)}</span>`;
+}
+
+async function loadStatus() {
+  try {
+    const h = await api("/health");
+    $("status").innerHTML = `
+      <div class="stat"><div class="label">状态</div><div class="value"><span class="dot ${h.ok ? "on" : "off"}"></span>${h.ok ? "在线" : "异常"}</div></div>
+      <div class="stat"><div class="label">嵌入模型</div><div class="value"><span class="dot ${h.embedding_ready ? "on" : "off"}"></span>${esc(h.embedding_provider || "退化(关键词)")}</div></div>
+      <div class="stat"><div class="label">文档数</div><div class="value">${h.documents}</div></div>
+      <div class="stat"><div class="label">分块数</div><div class="value">${h.chunks}</div></div>`;
+  } catch (e) {
+    $("status").innerHTML = `<span class="err">服务不可达: ${esc(e.message)}</span>`;
+  }
+}
+
+async function doRetrieve() {
+  const query = $("q").value.trim();
+  if (!query) return;
+  const scopes = $("scopes").value.split(",").map(s => s.trim()).filter(Boolean);
+  $("results").innerHTML = '<span class="dim">检索中…</span>';
+  try {
+    const d = await api("/kb/retrieve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, scopes, top_k: Number($("topk").value) || 5 }),
+    });
+    if (!d.results.length) {
+      $("results").innerHTML = '<span class="dim">无命中</span>';
+      return;
+    }
+    $("results").innerHTML = d.results.map((r, i) => `
+      <div class="hit" onclick="this.classList.toggle('open')">
+        <div class="head">
+          <span class="dim">#${i + 1}</span>
+          <span class="title">${esc(r.title)}</span>
+          ${scoreBadge(r.score)}
+          <span class="badge ${r.ns === "global" ? "ns-global" : ""}">${esc(r.ns)}</span>
+          <span class="badge">${esc(r.collection)}</span>
+          <span class="toggle">展开字段 ▾</span>
+        </div>
+        <div class="snippet">${esc(r.snippet)}</div>
+        <div class="meta mono">record_id: ${esc(r.record_id)}
+doc_id:    ${esc(r.doc_id)}
+ns:        ${esc(r.ns)}
+collection:${esc(r.collection)}
+score:     ${r.score === null ? "n/a" : r.score}</div>
+      </div>`).join("");
+  } catch (e) {
+    $("results").innerHTML = `<span class="err">检索失败: ${esc(e.message)}</span>`;
+  }
+}
+
+async function loadDocs() {
+  const scope = $("docScope").value;
+  try {
+    const d = await api("/kb/documents" + (scope ? `?scope=${encodeURIComponent(scope)}` : ""));
+    $("docs").innerHTML = d.documents.map(doc => `
+      <tr>
+        <td>${esc(doc.name)}</td>
+        <td><span class="badge ${doc.ns === "global" ? "ns-global" : ""}">${esc(doc.ns)}</span></td>
+        <td>${esc(doc.collection)}</td>
+        <td>${doc.chunks}</td>
+        <td>${doc.chars}</td>
+        <td class="dim">${fmtTime(doc.updated_at)}</td>
+        <td><button class="danger" onclick="delDoc('${doc.doc_id}', '${esc(doc.name)}')">删除</button></td>
+      </tr>`).join("") || '<tr><td colspan="7" class="dim">暂无文档</td></tr>';
+  } catch (e) {
+    $("docs").innerHTML = `<tr><td colspan="7" class="err">加载失败: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function delDoc(docId, name) {
+  if (!confirm(`删除文档「${name}」?(逻辑删除, 立即不可检索)`)) return;
+  await api(`/kb/documents/${docId}`, { method: "DELETE" });
+  loadDocs();
+}
+
+async function doScan() {
+  $("scanMsg").textContent = "扫描中…";
+  try {
+    const r = await api("/kb/scan", { method: "POST" });
+    $("scanMsg").textContent = `新入库 ${r.ingested}, 未变更 ${r.skipped}, 失败 ${r.errors}`;
+    loadDocs();
+    loadStatus();
+  } catch (e) {
+    $("scanMsg").textContent = `扫描失败: ${e.message}`;
+  }
+}
+
+async function loadQueries() {
+  try {
+    const d = await api("/kb/queries?limit=50");
+    const typeFilter = $("qtype").value;
+    const rows = (d.queries || []).filter(q => !typeFilter || (q.type || "retrieve") === typeFilter);
+    const typeBadge = (t) => t === "remember"
+      ? '<span class="badge score-mid">记忆写入</span>'
+      : '<span class="badge">检索</span>';
+    $("queries").innerHTML = rows.map(q => `
+      <tr>
+        <td class="dim mono">${fmtTime(q.ts)}</td>
+        <td>${typeBadge(q.type || "retrieve")}</td>
+        <td>${esc(q.query)}</td>
+        <td class="dim">${esc((q.scopes || []).join(", "))}</td>
+        <td>${(q.hits || []).map(h =>
+          `<div>${esc(h.title)} ${h.score !== null && h.score !== undefined ? `<span class="dim">(${h.score.toFixed(3)})</span>` : ""}</div>`
+        ).join("") || '<span class="dim">无命中</span>'}</td>
+      </tr>`).join("") || '<tr><td colspan="5" class="dim">暂无查询记录</td></tr>';
+  } catch (e) { /* 轮询失败静默, 下轮重试 */ }
+}
+
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") doRetrieve(); });
+$("qtype").addEventListener("change", loadQueries);
+loadStatus(); loadDocs(); loadQueries();
+setInterval(() => { loadStatus(); loadQueries(); }, 5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# skill 沙箱依赖覆盖表(宿主维护,随项目入库)。
+# 外部 skill 源文件(SKILL.md)不改;deps 与 frontmatter sandbox_python_deps 取并集;
+# ignore 记录已确认非 pip 包的模块名(onboard 不再提案)。
+# image: 沙箱镜像覆盖(优先级仅次于 frontmatter sandbox_image;用于 Node 底座等非
+#   Python 派生镜像,如 dashi-ppt);env: 注入容器 run step 的环境变量(docker -e)。
+# 由 `python -m host.capabilities.skill_registry onboard` 生成,可手改;改后跑一次 `python -m sandbox.build`。
+docx:
+  deps:
+  - defusedxml
+  ignore:
+  - helpers
+  - validators
+pptx:
+- Pillow
+- defusedxml
+- lxml

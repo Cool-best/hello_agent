@@ -1,0 +1,8 @@
+# kb_service 独立部署依赖(主项目 myenv310 已含 fastapi/uvicorn/agently,此处一并列出便于独立 venv)
+# 安装: pip install -r kb_service/requirements.txt (-i https://pypi.tuna.tsinghua.edu.cn/simple)
+fastapi>=0.141
+uvicorn>=0.53
+python-dotenv>=1.0
+agently>=4.1.4.7
+# 嵌入 provider(默认 EMBEDDING_PROVIDER=fastembed); 备选 sentence_transformers 需自行安装 torch 系
+fastembed==0.8.1

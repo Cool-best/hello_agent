@@ -1,0 +1,18 @@
+# 主项目(agent 后台)依赖清单
+# 安装: pip install -r requirements.txt (-i https://pypi.tuna.tsinghua.edu.cn/simple)
+# RAG 微服务依赖见 kb_service/requirements.txt
+agently>=4.1.4.7
+fastmcp>=3  # 宿主挂载外部工具 MCP 服务器(async_use_mcp)与 mcp_client 直调用;MCP 服务器实现不在本仓库
+fastapi>=0.141
+uvicorn>=0.53
+pydantic>=2.13
+python-dotenv>=1.0
+httpx>=0.28
+websockets>=15.0
+PyYAML>=6.0
+beautifulsoup4>=4.15
+trafilatura>=2.0  # web_fetch 主内容提取(去导航/页脚噪声,回包更瘦)
+playwright>=1.48  # web_fetch 渲染兜底(JS 页面);需另跑 python -m playwright install chromium
+openai>=3.11  # 仅旧版 openai_agent.py(已无引用,保留)使用,移除该文件后可删
+lark-oapi  # 飞书操作台(feishu_console/)长连接与 REST SDK
+python-multipart  # 飞书操作台文件上传表单(/api/reply_file)

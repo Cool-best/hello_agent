@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent 会话仪表盘</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header.topbar { background: #1f2937; color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 16px; }
+  header.topbar h1 { font-size: 16px; font-weight: 600; }
+  .conn { font-size: 12px; color: #9ca3af; }
+  .conn.on { color: #34d399; }
+  .conn.err { color: #f87171; }
+  .conn.warn { color: #fbbf24; }
+  .conn.link { cursor: pointer; }
+  .conn.link:hover { text-decoration: underline; }
+  .layout { flex: 1; display: flex; min-height: 0; }
+  .sidebar { width: 280px; background: #fff; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; }
+  .sidebar-head { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
+  .sidebar-head span { font-size: 13px; font-weight: 600; color: #374151; }
+  .ws-block { border-bottom: 1px solid #e5e7eb; padding: 8px 12px; }
+  .ws-open { display: flex; gap: 6px; margin-bottom: 6px; }
+  .ws-open input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; }
+  .ws-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; margin: 0 -6px; font-size: 12px; cursor: pointer; border-radius: 6px; }
+  .ws-item:hover { background: #f9fafb; }
+  .ws-item.active { background: #eff6ff; }
+  .ws-item .ws-name { font-weight: 600; color: #111827; white-space: nowrap; }
+  .ws-item .ws-root { color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .ws-item .ws-count { font-size: 11px; color: #9ca3af; white-space: nowrap; }
+  .ws-filter-tip { padding: 6px 12px; font-size: 12px; color: #1d4ed8; background: #eff6ff; border-bottom: 1px solid #dbeafe; cursor: pointer; }
+  .ws-badge { background: #ecfeff; color: #155e75; }
+  .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .modal { background: #fff; border-radius: 10px; width: 520px; max-height: 70vh; display: flex; flex-direction: column; overflow: hidden; }
+  .modal-head { padding: 10px 14px; border-bottom: 1px solid #e5e7eb; font-size: 14px; font-weight: 600; color: #111827; }
+  .modal-path { padding: 8px 14px; font-size: 12px; color: #6b7280; border-bottom: 1px solid #f3f4f6; display: flex; align-items: center; gap: 8px; }
+  .modal-path .cur { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: Consolas, monospace; }
+  .modal-list { flex: 1; overflow-y: auto; min-height: 200px; }
+  .dir-item { padding: 7px 14px; font-size: 13px; color: #374151; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+  .dir-item:hover { background: #eff6ff; }
+  .modal-foot { padding: 10px 14px; border-top: 1px solid #e5e7eb; display: flex; gap: 8px; align-items: center; }
+  .modal-foot input { flex: 1; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; }
+  .modal-foot .spacer { flex: 0; }
+  .btn { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; color: #374151; }
+  .btn:hover { background: #f3f4f6; }
+  .btn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .btn.primary:hover { background: #1d4ed8; }
+  .btn.danger { color: #dc2626; border-color: #fca5a5; }
+  .btn.danger:hover { background: #fef2f2; }
+  .session-list { flex: 1; overflow-y: auto; }
+  .session-item { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; cursor: pointer; }
+  .session-item:hover { background: #f9fafb; }
+  .session-item.active { background: #eff6ff; border-left: 3px solid #2563eb; }
+  .session-item .sid { font-size: 13px; font-weight: 600; color: #111827; word-break: break-all; }
+  .session-item .meta { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+  .session-item .time { font-size: 11px; color: #9ca3af; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; line-height: 16px; white-space: nowrap; }
+  .badge.pending { background: #fef3c7; color: #92400e; }
+  .badge.processing { background: #dbeafe; color: #1d4ed8; animation: pulse 1.2s ease-in-out infinite; }
+  .badge.done { background: #d1fae5; color: #065f46; }
+  .badge.failed { background: #fee2e2; color: #991b1b; }
+  .badge.idle { background: #f3f4f6; color: #6b7280; }
+  .badge.src { background: #ede9fe; color: #5b21b6; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+  .empty-tip { padding: 24px; text-align: center; color: #9ca3af; font-size: 13px; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .detail-head { background: #fff; border-bottom: 1px solid #e5e7eb; padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .detail-head .cid { font-size: 14px; font-weight: 600; color: #111827; word-break: break-all; }
+  .detail-head .spacer { flex: 1; }
+  .detail-body { flex: 1; overflow-y: auto; padding: 16px; }
+  .ctx { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 16px; }
+  .ctx summary { padding: 8px 12px; font-size: 13px; font-weight: 600; color: #374151; cursor: pointer; }
+  .ctx .ctx-list { padding: 0 12px 10px; max-height: 260px; overflow-y: auto; }
+  .ctx-msg { font-size: 12px; padding: 6px 8px; border-radius: 6px; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  .ctx-msg.user { background: #eff6ff; }
+  .ctx-msg.assistant { background: #f3f4f6; }
+  .ctx-msg .role { font-weight: 600; color: #6b7280; margin-right: 6px; }
+  .turn { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .turn-head { padding: 8px 12px; background: #f9fafb; border-bottom: 1px solid #f3f4f6; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .turn-head .tno { font-size: 12px; font-weight: 600; color: #374151; }
+  .turn-head .ttime { font-size: 11px; color: #9ca3af; }
+  .usage { font-size: 11px; color: #6b7280; background: #f3f4f6; border-radius: 4px; padding: 1px 6px; cursor: help; white-space: nowrap; }
+  .turn-body { padding: 10px 12px; }
+  .bubble { border-radius: 8px; padding: 8px 10px; font-size: 13px; white-space: pre-wrap; word-break: break-word; margin-bottom: 8px; }
+  .bubble .label { font-size: 11px; font-weight: 600; color: #6b7280; display: block; margin-bottom: 4px; }
+  .bubble.input { background: #eff6ff; }
+  .bubble.answer { background: #f0fdf4; margin-bottom: 0; }
+  .bubble.answer.streaming { background: #fffbeb; }
+  details.reasoning { margin-bottom: 8px; border: 1px dashed #d1d5db; border-radius: 8px; }
+  details.reasoning summary { padding: 6px 10px; font-size: 12px; color: #6b7280; cursor: pointer; }
+  details.reasoning .r-body { padding: 0 10px 8px; font-size: 12px; color: #4b5563; white-space: pre-wrap; word-break: break-word; font-family: Consolas, monospace; }
+  .steps { margin-bottom: 8px; }
+  .step { font-size: 11px; color: #92400e; background: #fffbeb; border-left: 3px solid #f59e0b; padding: 4px 8px; margin-top: 4px; border-radius: 0 4px 4px 0; }
+  .step.error { color: #991b1b; background: #fef2f2; border-left-color: #ef4444; }
+  .live-status { font-size: 11px; color: #1d4ed8; background: #eff6ff; border-radius: 4px; padding: 2px 8px; white-space: nowrap; }
+  details.llm-prompt summary { color: #7c3aed; }
+  .turn-error { font-size: 12px; color: #991b1b; background: #fef2f2; border-radius: 6px; padding: 6px 10px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
+  .files { font-size: 12px; color: #1d4ed8; background: #eff6ff; border-radius: 6px; padding: 6px 10px; margin-top: 8px; }
+  .files a { color: #1d4ed8; }
+  .compose { background: #fff; border-top: 1px solid #e5e7eb; padding: 10px 16px; display: flex; gap: 8px; align-items: flex-end; }
+  .compose input[type=text] { width: 220px; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+  .compose textarea { flex: 1; resize: none; height: 60px; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; font-family: inherit; }
+  .compose .btn.primary { padding: 8px 18px; font-size: 13px; }
+  .modal.wide { width: 920px; max-width: 95vw; max-height: 85vh; }
+  .eval-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .eval-summary { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
+  .eval-summary .num { font-size: 20px; font-weight: 600; color: #111827; }
+  .eval-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .eval-table th { text-align: left; color: #6b7280; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+  .eval-table td { padding: 6px 8px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+  .badge.pass { background: #d1fae5; color: #065f46; }
+  .badge.fail { background: #fee2e2; color: #991b1b; }
+  .badge.gap { background: #f3f4f6; color: #6b7280; }
+  .eval-case .asserts { font-size: 11px; color: #6b7280; margin-top: 4px; }
+  .eval-case .asserts .ok { color: #059669; }
+  .eval-case .asserts .no { color: #dc2626; }
+  .eval-case details { margin-top: 4px; }
+  .eval-case summary { font-size: 11px; color: #2563eb; cursor: pointer; }
+  .eval-case .ans { font-size: 12px; color: #374151; background: #f9fafb; border-radius: 6px; padding: 6px 8px; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+  .eval-note { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+  .tool-body { flex: 1; display: flex; min-height: 0; }
+  .tool-list { width: 230px; border-right: 1px solid #e5e7eb; overflow-y: auto; padding: 8px; }
+  .tool-group { font-size: 11px; font-weight: 600; color: #9ca3af; padding: 8px 6px 4px; }
+  .tool-item { padding: 6px 8px; font-size: 13px; color: #111827; border-radius: 6px; cursor: pointer; font-family: Consolas, monospace; display: flex; align-items: center; gap: 6px; }
+  .tool-item:hover { background: #f3f4f6; }
+  .tool-item.active { background: #eff6ff; }
+  .tool-item.disabled { color: #9ca3af; }
+  .tool-item .off { font-size: 10px; color: #dc2626; font-family: inherit; }
+  .tool-detail { flex: 1; overflow-y: auto; padding: 12px 16px; min-width: 0; }
+  .tool-detail h3 { font-size: 14px; color: #111827; font-family: Consolas, monospace; margin-bottom: 8px; }
+  .tool-label { font-size: 12px; font-weight: 600; color: #374151; margin: 10px 0 4px; }
+  .tool-desc { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px; font-size: 12px; color: #374151; white-space: pre-wrap; word-break: break-word; font-family: Consolas, monospace; max-height: 180px; overflow-y: auto; }
+  details.tool-instruct summary { font-size: 12px; color: #2563eb; cursor: pointer; }
+  .tool-params { margin-top: 4px; }
+  .tool-param { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; }
+  .tool-param label { width: 160px; font-size: 12px; color: #374151; font-family: Consolas, monospace; padding-top: 6px; word-break: break-all; }
+  .tool-param label .req { color: #dc2626; }
+  .tool-param label .ptype { color: #9ca3af; font-size: 11px; }
+  .tool-param input[type=text], .tool-param input[type=number], .tool-param textarea { flex: 1; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; font-family: Consolas, monospace; }
+  .tool-param textarea { resize: vertical; min-height: 60px; }
+  .tool-result { margin-top: 10px; border-radius: 6px; padding: 8px 10px; font-size: 12px; font-family: Consolas, monospace; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto; }
+  .tool-result.ok { background: #f0fdf4; border: 1px solid #bbf7d0; color: #065f46; }
+  .tool-result.err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  .tool-history { margin-top: 12px; border-top: 1px dashed #e5e7eb; padding-top: 8px; }
+  .tool-history .h-item { font-size: 11px; color: #6b7280; font-family: Consolas, monospace; padding: 2px 0; }
+  #tool-ws { padding: 3px 6px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; max-width: 220px; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <h1>Agent 会话仪表盘</h1>
+  <span class="conn" id="sse-conn">事件流: 连接中…</span>
+  <span class="conn" id="ws-conn">操作台 WS: 未知</span>
+  <span class="conn" id="kb-conn">RAG: …</span>
+  <span class="conn" id="llm-conn">LLM: …</span>
+  <span style="flex:1"></span>
+  <button class="btn" id="btn-tools">🔧 工具调试</button>
+  <button class="btn" id="btn-eval">长上下文评测</button>
+</header>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span>会话列表</span>
+      <button class="btn" id="btn-new">+ 新会话</button>
+    </div>
+    <div class="ws-block">
+      <div class="ws-open">
+        <input type="text" id="ws-path" placeholder="workspace 目录路径">
+        <button class="btn" id="btn-ws-open">打开</button>
+        <button class="btn" id="btn-ws-browse">浏览…</button>
+      </div>
+      <div id="ws-list"></div>
+    </div>
+    <div class="session-list" id="session-list"><div class="empty-tip">暂无会话</div></div>
+  </aside>
+  <section class="main">
+    <div class="detail-head" id="detail-head" style="display:none">
+      <span class="cid" id="d-cid"></span>
+      <span id="d-badges"></span>
+      <span id="d-ws"></span>
+      <span class="spacer"></span>
+      <button class="btn danger" id="btn-clear">清空上下文</button>
+    </div>
+    <div class="detail-body" id="detail-body"><div class="empty-tip">从左侧选择会话，或在下方直接发起新会话</div></div>
+    <div class="compose">
+      <input type="text" id="compose-cid" placeholder="会话 ID（留空则新建）">
+      <textarea id="compose-text" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+      <button class="btn primary" id="btn-send">发送</button>
+    </div>
+  </section>
+</div>
+<div class="modal-mask" id="fs-modal" style="display:none">
+  <div class="modal">
+    <div class="modal-head">选择 workspace 目录</div>
+    <div class="modal-path">
+      <button class="btn" id="fs-up">上级</button>
+      <span class="cur" id="fs-cur"></span>
+    </div>
+    <div class="modal-list" id="fs-list"></div>
+    <div class="modal-foot">
+      <input type="text" id="fs-new-name" placeholder="新建文件夹名">
+      <button class="btn" id="fs-mkdir">新建</button>
+      <span class="spacer"></span>
+      <button class="btn" id="fs-cancel">取消</button>
+      <button class="btn primary" id="fs-choose">选择当前目录</button>
+    </div>
+  </div>
+</div>
+<div class="modal-mask" id="eval-modal" style="display:none">
+  <div class="modal wide">
+    <div class="modal-head">长上下文会话评测
+      <span style="float:right;display:flex;gap:8px;align-items:center">
+        <span id="eval-status" style="font-size:12px;color:#6b7280;font-weight:normal"></span>
+        <button class="btn primary" id="btn-eval-run">运行评测</button>
+        <button class="btn" id="btn-eval-close">关闭</button>
+      </span>
+    </div>
+    <div class="eval-body" id="eval-body"><div class="empty-tip">尚无评测报告,点「运行评测」开始(数分钟)</div></div>
+  </div>
+</div>
+<div class="modal-mask" id="tool-modal" style="display:none">
+  <div class="modal wide">
+    <div class="modal-head">🔧 工具调试(不走大模型,直接调用验证)
+      <span style="float:right;display:flex;gap:8px;align-items:center">
+        <select id="tool-ws" title="文件类工具和 write_deliverable 需要选择 workspace 作为执行环境"></select>
+        <button class="btn" id="btn-tool-close">关闭</button>
+      </span>
+    </div>
+    <div class="tool-body">
+      <div class="tool-list" id="tool-list"><div class="empty-tip">加载中…</div></div>
+      <div class="tool-detail" id="tool-detail"><div class="empty-tip">从左侧选择工具</div></div>
+    </div>
+  </div>
+</div>
+<script>
+const STATUS_TEXT = { pending: "待处理", processing: "处理中", done: "已完成", failed: "失败", idle: "空闲" };
+const SOURCE_TEXT = { feishu: "飞书", web: "网页" };
+const state = { sessions: {}, selected: null, workspaces: {}, ws_filter: null };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtTime = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour12: false }) : "-";
+const fmtDur = (t) => (t.started_at && t.finished_at) ? ` · ${(t.finished_at - t.started_at).toFixed(1)}s` : "";
+const fmtTok = (n) => (n || 0) >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n || 0);
+
+function usageHtml(t) {
+  const u = t.usage;
+  if (!u) return "";
+  const used = (u.input_tokens || 0) + (u.output_tokens || 0) + (u.reasoning_tokens || 0);
+  const pct = u.context_window ? Math.min(100, (used / u.context_window) * 100) : 0;
+  const parts = [`≈入 ${fmtTok(u.input_tokens)}`];
+  if (u.reasoning_tokens) parts.push(`思考 ${fmtTok(u.reasoning_tokens)}`);
+  parts.push(t.status === "processing" ? "出 …" : `出 ${fmtTok(u.output_tokens)}`);
+  parts.push(`窗口 ${fmtTok(u.context_window)}·占 ${pct.toFixed(1)}%`);
+  return `<span class="usage" title="token 数为估算值：CJK≈1 token/字，其余≈4 字符/token；上下文窗口大小可在 .env 的 LLM_CONTEXT_WINDOW 配置">${parts.join(" · ")}</span>`;
+}
+
+function badge(status) { return `<span class="badge ${status}">${STATUS_TEXT[status] || status}</span>`; }
+function srcBadge(src) { return `<span class="badge src">${SOURCE_TEXT[src] || src}</span>`; }
+
+function ensureSession(summary) {
+  const id = summary.chat_id;
+  if (!state.sessions[id]) state.sessions[id] = { history: [], turns: [] };
+  Object.assign(state.sessions[id], summary);
+  return state.sessions[id];
+}
+
+function findTurn(session, turnId) {
+  return session && session.turns.find((t) => t.id === turnId);
+}
+
+function applyEvent(ev) {
+  let affected = ev.chat_id;
+  if (ev.type === "turn_created" || ev.type === "turn_status") {
+    const session = ensureSession(ev.session || { chat_id: ev.chat_id });
+    const idx = session.turns.findIndex((t) => t.id === ev.turn.id);
+    // 事件携带的是服务端 turn 快照,整对象替换会抹掉纯前端观测字段
+    // (llm_prompt/lastEventAt 只存在于 SSE 流,不在快照里)——合并保留
+    const prev = idx >= 0 ? session.turns[idx] : null;
+    if (prev) {
+      if (prev.llm_prompt) ev.turn.llm_prompt = prev.llm_prompt;
+      if (prev.lastEventAt) ev.turn.lastEventAt = prev.lastEventAt;
+    }
+    if (idx >= 0) session.turns[idx] = ev.turn; else session.turns.push(ev.turn);
+  } else if (ev.type === "turn_progress") {
+    const turn = findTurn(state.sessions[ev.chat_id], ev.turn_id);
+    if (turn) { turn[ev.field] = ev.text; turn.lastEventAt = Date.now() / 1000; }
+  } else if (ev.type === "llm_prompt") {
+    const turn = findTurn(state.sessions[ev.chat_id], ev.turn_id);
+    if (turn) {
+      turn.llm_prompt = {
+        n: (turn.llm_prompt ? turn.llm_prompt.n : 0) + 1,
+        attempt: ev.attempt,
+        messages: ev.messages,
+        total_chars: ev.total_chars,
+        ts: ev.ts,
+      };
+      turn.lastEventAt = Date.now() / 1000;
+    }
+  } else if (ev.type === "step") {
+    const turn = findTurn(state.sessions[ev.chat_id], ev.turn_id);
+    if (turn) { turn.steps.push(ev.step); turn.lastEventAt = Date.now() / 1000; }
+  } else if (ev.type === "session_cleared") {
+    delete state.sessions[ev.chat_id];
+    if (state.selected === ev.chat_id) state.selected = null;
+  } else if (ev.type === "workspace_bound") {
+    const session = ensureSession(ev.session || { chat_id: ev.chat_id });
+    session.workspace = ev.workspace;
+  } else if (ev.type === "workspace_unbound") {
+    const session = ensureSession(ev.session || { chat_id: ev.chat_id });
+    session.workspace = null;
+  } else {
+    return;
+  }
+  renderSidebar();
+  renderWs();
+  if (!affected || state.selected === affected || !state.selected) renderDetail();
+}
+
+function renderWs() {
+  const list = Object.values(state.workspaces);
+  const el = $("ws-list");
+  if (!list.length) { el.innerHTML = '<div class="empty-tip" style="padding:8px">未打开 workspace</div>'; return; }
+  el.innerHTML = list.map((w) => `
+    <div class="ws-item ${state.ws_filter === w.id ? "active" : ""}" data-wsfilter="${esc(w.id)}" title="${esc(w.root)}">
+      <span class="ws-name">${esc(w.name)}</span>
+      <span class="ws-root">${esc(w.root)}</span>
+      <span class="ws-count">${(w.chat_ids || []).length} 会话</span>
+      <button class="btn" data-wsid="${esc(w.id)}">绑定</button>
+    </div>`).join("");
+  el.querySelectorAll(".ws-item").forEach((item) => {
+    item.onclick = () => {
+      // 点击条目:筛选该 workspace 下的会话;再点一次取消筛选
+      state.ws_filter = state.ws_filter === item.dataset.wsfilter ? null : item.dataset.wsfilter;
+      renderWs();
+      renderSidebar();
+    };
+  });
+  el.querySelectorAll("button[data-wsid]").forEach((btn) => {
+    btn.onclick = (e) => { e.stopPropagation(); bindWorkspace(btn.dataset.wsid); };
+  });
+}
+
+async function bindWorkspace(wsId) {
+  if (!state.selected) { alert("请先在左侧选择一个会话"); return; }
+  const resp = await fetch(`/api/workspaces/${encodeURIComponent(wsId)}/bind`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: state.selected }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) { alert(data.detail || "绑定失败"); return; }
+  const session = state.sessions[state.selected];
+  if (session) { session.workspace = data.workspace; renderSidebar(); renderDetail(); }
+}
+
+function renderSidebar() {
+  let list = Object.values(state.sessions).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  const el = $("session-list");
+  let filterTip = "";
+  if (state.ws_filter) {
+    const ws = state.workspaces[state.ws_filter];
+    list = list.filter((s) => s.workspace && s.workspace.id === state.ws_filter);
+    filterTip = `<div class="ws-filter-tip" id="ws-filter-clear">仅显示「${esc(ws ? ws.name : state.ws_filter)}」的会话 ✕ 点击取消</div>`;
+  }
+  if (!list.length) {
+    el.innerHTML = filterTip + `<div class="empty-tip">${state.ws_filter ? "该 workspace 下暂无会话" : "暂无会话"}</div>`;
+    bindFilterClear(el);
+    return;
+  }
+  el.innerHTML = filterTip + list.map((s) => `
+    <div class="session-item ${state.selected === s.chat_id ? "active" : ""}" data-cid="${esc(s.chat_id)}">
+      <div class="sid">${esc(s.chat_id)}</div>
+      <div class="meta">${badge(s.status)}${s.stub ? ' <span class="badge idle">重启前</span>' : ""}${s.workspace ? ` <span class="badge ws-badge" title="${esc(s.workspace.root)}">📁 ${esc(s.workspace.name)}</span>` : ""}<span class="time">${fmtTime(s.updated_at)}</span></div>
+    </div>`).join("");
+  el.querySelectorAll(".session-item").forEach((item) => {
+    item.onclick = () => { state.selected = item.dataset.cid; $("compose-cid").value = state.selected; renderSidebar(); renderDetail(); };
+  });
+  bindFilterClear(el);
+}
+
+function bindFilterClear(el) {
+  const tip = el.querySelector("#ws-filter-clear");
+  if (tip) tip.onclick = () => { state.ws_filter = null; renderWs(); renderSidebar(); };
+}
+
+function collectOpenDetails() {
+  const open = new Set();
+  document.querySelectorAll("#detail-body details[data-key]").forEach((d) => { if (d.open) open.add(d.dataset.key); });
+  return open;
+}
+
+function renderDetail() {
+  const body = $("detail-body");
+  const head = $("detail-head");
+  const s = state.sessions[state.selected];
+  if (!s) {
+    head.style.display = "none";
+    body.innerHTML = '<div class="empty-tip">从左侧选择会话，或在下方直接发起新会话</div>';
+    return;
+  }
+  head.style.display = "";
+  $("d-cid").textContent = s.chat_id;
+  $("d-badges").innerHTML = badge(s.status) + ` <span class="conn">上下文 ${s.message_count ?? s.history.length} 条 · ${s.turn_count ?? s.turns.length} 轮</span>`;
+  $("d-ws").innerHTML = s.workspace
+    ? `<span class="badge ws-badge" title="${esc(s.workspace.root)}">📁 ${esc(s.workspace.name)}</span> <button class="btn" id="btn-ws-unbind">解绑</button>`
+    : '<span class="conn">未绑定 workspace</span>';
+  const unbindBtn = $("btn-ws-unbind");
+  if (unbindBtn) unbindBtn.onclick = unbindWorkspace;
+
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+  const open = collectOpenDetails();
+
+  const ctxRows = s.history.map((m) =>
+    `<div class="ctx-msg ${esc(m.role)}"><span class="role">${m.role === "user" ? "用户" : "助手"}</span>${esc(m.content)}</div>`
+  ).join("");
+  const ctxHtml = `
+    <details class="ctx" data-key="__ctx" ${open.has("__ctx") ? "open" : ""}>
+      <summary>当前上下文（${s.history.length} 条）</summary>
+      <div class="ctx-list">${ctxRows || '<div class="empty-tip">暂无上下文</div>'}</div>
+    </details>`;
+
+  const turnsHtml = s.turns.map((t, i) => {
+    const streaming = t.status === "processing";
+    const llmHtml = t.llm_prompt ? `
+      <details class="reasoning llm-prompt" data-key="lp-${t.id}" ${open.has("lp-" + t.id) ? "open" : ""}>
+        <summary>LLM 提示词（第 ${t.llm_prompt.n} 次请求 · 约 ${fmtTok(t.llm_prompt.total_chars)} 字 · ${fmtTime(t.llm_prompt.ts)}）</summary>
+        <div class="r-body">${t.llm_prompt.messages.map((m) => `[${esc(m.role)}]\n${esc(m.content)}`).join("\n\n")}</div>
+      </details>` : "";
+    const reasoningHtml = t.reasoning ? `
+      <details class="reasoning" data-key="r-${t.id}" ${open.has("r-" + t.id) || streaming ? "open" : ""}>
+        <summary>思考内容（${t.reasoning.length} 字）${streaming && !t.answer ? " · 进行中…" : ""}</summary>
+        <div class="r-body">${esc(t.reasoning)}</div>
+      </details>` : "";
+    const stepsHtml = t.steps.length ? `<div class="steps">${t.steps.map((st) =>
+      `<div class="step ${st.kind === "error" ? "error" : ""}">[${fmtTime(st.ts)}] ${esc(st.kind)}${st.detail ? " · " + esc(st.detail) : ""}</div>`
+    ).join("")}</div>` : "";
+    const answerHtml = (t.answer || streaming) ? `
+      <div class="bubble answer ${streaming ? "streaming" : ""}">
+        <span class="label">${streaming && !t.answer ? "生成中…" : "答复"}</span>${esc(t.answer)}
+      </div>` : "";
+    const errHtml = t.error ? `<div class="turn-error">错误: ${esc(t.error)}</div>` : "";
+    const filesHtml = (t.produced_files && t.produced_files.length) ? `
+      <div class="files">📎 产物: ${t.produced_files.map((f) =>
+        s.workspace
+          ? `<a href="/api/workspaces/${encodeURIComponent(s.workspace.id)}/file?path=${encodeURIComponent(f.path)}" download>${esc(f.name)}</a>`
+          : esc(f.name)
+      ).join("、")}</div>` : "";
+    return `
+      <div class="turn">
+        <div class="turn-head">
+          <span class="tno">#${i + 1}</span>
+          ${srcBadge(t.source)}
+          ${t.seq != null ? `<span class="ttime">seq ${t.seq}</span>` : ""}
+          ${badge(t.status)}
+          ${usageHtml(t)}
+          <span class="ttime">${fmtTime(t.created_at)}${fmtDur(t)}</span>
+          ${streaming ? `<span class="live-status" data-lsid="${t.id}"></span>` : ""}
+        </div>
+        <div class="turn-body">
+          <div class="bubble input"><span class="label">用户输入</span>${esc(t.input)}</div>
+          ${llmHtml}
+          ${reasoningHtml}
+          ${stepsHtml}
+          ${answerHtml}
+          ${filesHtml}
+          ${errHtml}
+        </div>
+      </div>`;
+  }).join("");
+
+  body.innerHTML = ctxHtml + (turnsHtml || '<div class="empty-tip">暂无轮次</div>');
+  if (nearBottom) body.scrollTop = body.scrollHeight;
+  updateLiveStatuses();
+}
+
+// ── 进行中轮次的实时状态行:已用时 / 当前阶段 / 最后活动距今 ──
+// 全部数据来自已有事件(steps/turn_progress/llm_prompt 的本地时间戳),
+// 心跳只做 1s 重算文本,不整树重渲染(避免打断用户阅读/选中文本)。
+function currentPhase(t) {
+  if (t.answer) return "输出答复中";
+  const last = t.steps && t.steps.length ? t.steps[t.steps.length - 1] : null;
+  if (last && last.kind === "action") {
+    return String(last.detail || "").includes("→") ? "等待模型继续(工具已返回)" : "工具执行中";
+  }
+  if (t.reasoning) return "模型思考中";
+  if (t.llm_prompt) return "等待模型响应";
+  return "准备中";
+}
+
+function liveStatusText(t) {
+  const now = Date.now() / 1000;
+  const start = t.started_at || t.created_at || now;
+  const elapsed = Math.max(0, now - start).toFixed(0);
+  const last = t.steps && t.steps.length ? t.steps[t.steps.length - 1] : null;
+  const stepBase = last ? last.ts : start;
+  const stepElapsed = Math.max(0, now - stepBase).toFixed(0);
+  const lastEvent = t.lastEventAt || stepBase;
+  const ago = Math.max(0, now - lastEvent).toFixed(0);
+  const stall = now - lastEvent >= 10 ? " ⚠️ 超过 10s 无新事件,可能卡住" : "";
+  const stepName = last ? ` · 当前步: ${String(last.detail || last.kind).slice(0, 60)}(该步 ${stepElapsed}s)` : "";
+  return `⏱ 本轮 ${elapsed}s${stepName} · ${currentPhase(t)} · 最后活动 ${ago}s 前${stall}`;
+}
+
+function updateLiveStatuses() {
+  document.querySelectorAll("[data-lsid]").forEach((el) => {
+    const s = state.sessions[state.selected];
+    const t = s && findTurn(s, el.dataset.lsid);
+    if (t) el.textContent = liveStatusText(t);
+  });
+}
+setInterval(updateLiveStatuses, 1000);
+
+async function unbindWorkspace() {
+  if (!state.selected) return;
+  await fetch(`/api/sessions/${encodeURIComponent(state.selected)}/unbind`, { method: "POST" });
+  const session = state.sessions[state.selected];
+  if (session) { session.workspace = null; renderSidebar(); renderDetail(); }
+}
+
+async function loadOverview() {
+  try {
+    const resp = await fetch("/api/overview");
+    const data = await resp.json();
+    for (const s of data.sessions) {
+      // 整会话替换会抹掉 SSE 流里积累的纯前端观测字段(llm_prompt/lastEventAt),合并保留
+      const prev = state.sessions[s.chat_id];
+      if (prev) {
+        const prevTurns = Object.fromEntries((prev.turns || []).map((t) => [t.id, t]));
+        for (const t of s.turns || []) {
+          const pt = prevTurns[t.id];
+          if (pt) {
+            if (pt.llm_prompt) t.llm_prompt = pt.llm_prompt;
+            if (pt.lastEventAt) t.lastEventAt = pt.lastEventAt;
+          }
+        }
+      }
+      state.sessions[s.chat_id] = s;
+    }
+    state.workspaces = {};
+    for (const w of data.workspaces || []) state.workspaces[w.id] = w;
+    if (data.console_enabled === false) {
+      $("ws-conn").textContent = "操作台 WS: 未启用";
+      $("ws-conn").className = "conn";
+    } else {
+      $("ws-conn").textContent = data.console_ws_connected ? "操作台 WS: 已连接" : "操作台 WS: 未连接";
+      $("ws-conn").className = "conn" + (data.console_ws_connected ? " on" : "");
+    }
+    const kb = data.kb || {};
+    const kbEl = $("kb-conn");
+    window.__kbUrl = kb.url || "http://127.0.0.1:8002";
+    if (!kb.enabled) {
+      kbEl.textContent = "RAG: 未启用";
+      kbEl.className = "conn";
+      kbEl.title = "KB_ENABLED=false";
+    } else if (kb.reachable) {
+      const deg = kb.vector_enabled ? "" : " ·退化检索";
+      const mem = kb.memory_enabled ? " ·记忆开" : "";
+      kbEl.textContent = `RAG: 已连接(文档 ${kb.documents ?? "?"})${deg}${mem}`;
+      kbEl.className = "conn on link";
+      kbEl.title = `kb_service ${kb.url}\n嵌入: ${kb.embedding_ready ? "就绪" : "未就绪"}\n点击打开 RAG 观测台`;
+    } else {
+      kbEl.textContent = "RAG: 不可达";
+      kbEl.className = "conn err link";
+      kbEl.title = `kb_service ${kb.url} 连接失败\n点击尝试打开观测台`;
+    }
+    const llm = data.llm || {};
+    const llmEl = $("llm-conn");
+    if (!llm.model) {
+      llmEl.textContent = "LLM: 未知";
+      llmEl.className = "conn";
+    } else {
+      const isFallback = llm.via === "fallback";
+      llmEl.textContent = `LLM: ${llm.model}${isFallback ? " ·备用端点" : ""}`;
+      llmEl.className = "conn " + (isFallback ? "warn" : "on");
+      llmEl.title = `${llm.base_url}\n来源: ${isFallback ? "备份(主端点探测失败,重启后重新探测)" : "主端点"}`;
+    }
+    renderSidebar();
+    renderWs();
+    renderDetail();
+  } catch (e) { console.error("overview 加载失败", e); }
+}
+
+function connectEvents() {
+  const es = new EventSource("/api/events");
+  es.onopen = () => { $("sse-conn").textContent = "事件流: 已连接"; $("sse-conn").className = "conn on"; };
+  es.onerror = () => { $("sse-conn").textContent = "事件流: 重连中…"; $("sse-conn").className = "conn"; };
+  es.onmessage = (e) => {
+    try { applyEvent(JSON.parse(e.data)); } catch (err) { console.error("事件解析失败", err); }
+  };
+}
+
+async function sendChat() {
+  const text = $("compose-text").value.trim();
+  if (!text) return;
+  const cid = $("compose-cid").value.trim();
+  $("btn-send").disabled = true;
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, chat_id: cid || null }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { alert(data.detail || "发送失败"); return; }
+    $("compose-text").value = "";
+    state.selected = data.chat_id;
+    $("compose-cid").value = data.chat_id;
+    renderSidebar();
+    renderDetail();
+  } catch (e) { alert("发送失败: " + e); }
+  finally { $("btn-send").disabled = false; }
+}
+
+$("btn-send").onclick = sendChat;
+$("compose-text").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+$("btn-new").onclick = () => { state.selected = null; $("compose-cid").value = ""; $("compose-text").focus(); renderSidebar(); renderDetail(); };
+async function openWorkspacePath(path) {
+  const resp = await fetch("/api/workspaces", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  let data;
+  try { data = await resp.json(); } catch (e) { alert(`打开失败: 服务返回异常(${resp.status})`); return null; }
+  if (!resp.ok) { alert(data.detail || "打开失败"); return null; }
+  state.workspaces[data.id] = data;
+  renderWs();
+  return data;
+}
+
+$("btn-ws-open").onclick = async () => {
+  const path = $("ws-path").value.trim();
+  if (!path) { alert("请输入目录路径，或点「浏览…」选择"); return; }
+  const ws = await openWorkspacePath(path);
+  if (ws) $("ws-path").value = "";
+};
+$("ws-path").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("btn-ws-open").click(); } });
+
+// 弹窗式目录浏览器
+const fsState = { path: "", parent: null };
+
+async function fsList(path) {
+  const resp = await fetch("/api/fs/list?path=" + encodeURIComponent(path || ""));
+  let data;
+  try { data = await resp.json(); } catch (e) { alert(`目录读取失败: 服务返回异常(${resp.status})`); return; }
+  if (!resp.ok) { alert(data.detail || "目录读取失败"); return; }
+  fsState.path = data.path;
+  fsState.parent = data.parent;
+  $("fs-cur").textContent = data.path || "选择盘符";
+  $("fs-up").disabled = data.parent === null && !data.path ? true : false;
+  $("fs-list").innerHTML = data.dirs.length
+    ? data.dirs.map((d) => `<div class="dir-item" data-path="${esc(d.path)}">📁 ${esc(d.name)}</div>`).join("")
+    : '<div class="empty-tip">此目录下没有子文件夹</div>';
+  $("fs-list").querySelectorAll(".dir-item").forEach((item) => {
+    item.onclick = () => fsList(item.dataset.path);
+  });
+}
+
+$("btn-ws-browse").onclick = () => { $("fs-modal").style.display = "flex"; fsList(fsState.path); };
+$("fs-cancel").onclick = () => { $("fs-modal").style.display = "none"; };
+$("fs-modal").onclick = (e) => { if (e.target === $("fs-modal")) $("fs-modal").style.display = "none"; };
+$("fs-up").onclick = () => { if (fsState.parent !== null || fsState.path) fsList(fsState.parent ?? ""); };
+$("fs-mkdir").onclick = async () => {
+  const name = $("fs-new-name").value.trim();
+  if (!name) { alert("请输入文件夹名"); return; }
+  if (!fsState.path) { alert("请先进入一个盘符或目录"); return; }
+  const resp = await fetch("/api/fs/mkdir", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: fsState.path, name }),
+  });
+  let data;
+  try { data = await resp.json(); } catch (e) { alert(`新建失败: 服务返回异常(${resp.status})`); return; }
+  if (!resp.ok) { alert(data.detail || "新建失败"); return; }
+  $("fs-new-name").value = "";
+  fsList(fsState.path);
+};
+$("fs-choose").onclick = async () => {
+  if (!fsState.path) { alert("请先进入一个目录"); return; }
+  const ws = await openWorkspacePath(fsState.path);
+  if (ws) $("fs-modal").style.display = "none";
+};
+$("btn-clear").onclick = async () => {
+  if (!state.selected || !confirm(`确定清空会话 ${state.selected} 的上下文？`)) return;
+  await fetch("/sessions/" + encodeURIComponent(state.selected), { method: "DELETE" });
+};
+
+// ── 长上下文评测面板 ──
+let evalTimer = null;
+
+function evalCaseHtml(c) {
+  const st = c.gap ? '<span class="badge gap">GAP</span>'
+    : c.pass ? '<span class="badge pass">PASS</span>' : '<span class="badge fail">FAIL</span>';
+  const asserts = (c.assertions || []).map(a =>
+    `<span class="${a.pass ? "ok" : "no"}">${a.pass ? "✓" : "✗"} ${esc(a.check)}</span>`
+  ).join("　");
+  return `<tr class="eval-case">
+    <td>${st}</td>
+    <td>${esc(c.type)}</td>
+    <td><b>${esc(c.case_id)}</b><div class="eval-note">${esc(c.note || "")}</div></td>
+    <td class="mono">${c.duration}s${c.error ? `<div style="color:#dc2626">${esc(c.error)}</div>` : ""}</td>
+    <td><div class="asserts">${asserts || '<span style="color:#9ca3af">无断言</span>'}</div>
+      <details><summary>终问与回答</summary>
+        <div class="ans"><b>Q:</b> ${esc(c.final_query)}</div>
+        <div class="ans"><b>A:</b> ${esc(c.answer_excerpt || "(空)")}</div>
+      </details></td>
+  </tr>`;
+}
+
+function renderEval(data) {
+  const stText = data.status.running
+    ? `评测进行中… ${esc(data.status.progress || "")}`
+    : data.status.finished_at
+      ? `上次完成: ${new Date(data.status.finished_at * 1000).toLocaleString("zh-CN", { hour12: false })}`
+      : "";
+  $("eval-status").textContent = stText;
+  $("btn-eval-run").disabled = data.status.running;
+  const r = data.report;
+  if (!r) {
+    $("eval-body").innerHTML = '<div class="empty-tip">尚无评测报告,点「运行评测」开始(数分钟)</div>';
+    return;
+  }
+  const s = r.summary;
+  const typeRows = Object.entries(s.by_type || {}).map(([t, v]) =>
+    `<span>${esc(t)} <b>${v.passed}/${v.n}</b></span>`).join(" · ");
+  $("eval-body").innerHTML = `
+    <div class="eval-summary">
+      <span><span class="num">${s.passed}</span>/${s.total} 通过</span>
+      ${s.gap_cases ? `<span class="conn">${s.gap_cases} 条 gap(只记录不计分)</span>` : ""}
+      <span class="conn">run ${esc(r.run_id)} · 耗时 ${r.duration}s</span>
+    </div>
+    <div class="eval-summary" style="font-size:12px">${typeRows}</div>
+    <table class="eval-table">
+      <thead><tr><th></th><th>类型</th><th>用例</th><th>耗时</th><th>断言 / 回答</th></tr></thead>
+      <tbody>${(r.cases || []).map(evalCaseHtml).join("")}</tbody>
+    </table>`;
+}
+
+async function loadEval() {
+  try {
+    const resp = await fetch("/api/eval/long_context");
+    renderEval(await resp.json());
+  } catch (e) { /* 下轮重试 */ }
+}
+
+$("kb-conn").onclick = () => window.open(window.__kbUrl || "http://127.0.0.1:8002", "_blank");
+
+$("btn-eval").onclick = () => {
+  $("eval-modal").style.display = "flex";
+  loadEval();
+  if (evalTimer) clearInterval(evalTimer);
+  evalTimer = setInterval(loadEval, 2500);
+};
+$("btn-eval-close").onclick = () => {
+  $("eval-modal").style.display = "none";
+  if (evalTimer) { clearInterval(evalTimer); evalTimer = null; }
+};
+$("btn-eval-run").onclick = async () => {
+  const resp = await fetch("/api/eval/long_context/run", { method: "POST" });
+  const data = await resp.json();
+  if (!data.ok) alert(data.msg || "启动失败");
+  loadEval();
+};
+
+// ── 工具调试面板 ──
+const toolState = { tools: [], selected: null, history: [] };
+
+async function loadTools() {
+  const wsId = $("tool-ws").value;
+  const resp = await fetch("/api/tools" + (wsId ? `?workspace_id=${encodeURIComponent(wsId)}` : ""));
+  const data = await resp.json();
+  toolState.tools = data.tools || [];
+  toolState.mcpDebugUrl = data.mcp_debug_url || null;
+  renderToolList();
+  renderToolDetail();
+}
+
+function renderToolList() {
+  const el = $("tool-list");
+  const mcpLink = toolState.mcpDebugUrl
+    ? `<div class="tool-group">MCP 工具</div>
+       <div class="tool-item" onclick="window.open('${esc(toolState.mcpDebugUrl)}', '_blank')"
+            title="web_search / amap_* / web_fetch 抓取核心的调试在 MCP 调试台(列表即真实注册表)">
+         🔗 MCP 调试台 ↗<br><span class="ptype">web_search · amap_* · web_fetch 核心</span>
+       </div>`
+    : "";
+  if (!toolState.tools.length) { el.innerHTML = mcpLink + '<div class="empty-tip">无工具</div>'; return; }
+  const groups = [];
+  for (const t of toolState.tools) {
+    let g = groups.find((x) => x.key === t.group);
+    if (!g) { g = { key: t.group, label: t.group_label, tools: [] }; groups.push(g); }
+    g.tools.push(t);
+  }
+  el.innerHTML = mcpLink + groups.map((g) => `
+    <div class="tool-group">${esc(g.label)}</div>
+    ${g.tools.map((t) => `
+      <div class="tool-item ${toolState.selected === t.name ? "active" : ""} ${t.enabled ? "" : "disabled"}"
+           data-tool="${esc(t.name)}" title="${t.enabled ? esc(t.description.slice(0, 120)) : esc(t.disabled_reason)}">
+        ${esc(t.name)}${t.enabled ? "" : '<span class="off">未启用</span>'}
+      </div>`).join("")}`).join("");
+  el.querySelectorAll(".tool-item[data-tool]").forEach((item) => {
+    item.onclick = () => { toolState.selected = item.dataset.tool; renderToolList(); renderToolDetail(); };
+  });
+}
+
+function paramInputHtml(p) {
+  const req = p.required ? '<span class="req">*</span>' : "";
+  const def = p.has_default && p.default !== null && p.default !== "" ? p.default : "";
+  const title = p.description ? ` title="${esc(p.description)}"` : "";
+  const label = `<label${title}>${esc(p.name)}${req}<br><span class="ptype">${esc(p.type)}${p.has_default ? ` · 默认 ${esc(JSON.stringify(p.default))}` : ""}</span></label>`;
+  if (p.type === "bool") {
+    return `<div class="tool-param">${label}<input type="checkbox" data-pname="${esc(p.name)}" data-ptype="bool" ${p.default ? "checked" : ""}></div>`;
+  }
+  if (p.type === "int" || p.type === "float") {
+    return `<div class="tool-param">${label}<input type="number" data-pname="${esc(p.name)}" data-ptype="${esc(p.type)}" value="${esc(def)}" ${p.required ? 'placeholder="必填"' : ""}></div>`;
+  }
+  if (p.name === "content") {
+    return `<div class="tool-param">${label}<textarea data-pname="${esc(p.name)}" data-ptype="str">${esc(def)}</textarea></div>`;
+  }
+  return `<div class="tool-param">${label}<input type="text" data-pname="${esc(p.name)}" data-ptype="str" value="${esc(def)}" ${p.required ? 'placeholder="必填"' : ""}></div>`;
+}
+
+function renderToolDetail() {
+  const el = $("tool-detail");
+  const t = toolState.tools.find((x) => x.name === toolState.selected);
+  if (!t) { el.innerHTML = '<div class="empty-tip">从左侧选择工具</div>'; return; }
+  const histHtml = toolState.history.filter((h) => h.tool === t.name).slice(0, 5).map((h) =>
+    `<div class="h-item">[${h.time}] ${h.ok ? "✓" : "✗"} ${esc(h.args)} → ${h.ok ? `${h.elapsed}ms` : esc(h.error)}</div>`
+  ).join("");
+  el.innerHTML = `
+    <h3>${esc(t.name)} <span class="badge src">${esc(t.group_label)}</span>${t.enabled ? "" : ` <span class="badge failed">${esc(t.disabled_reason)}</span>`}</h3>
+    ${t.note ? `<div class="tool-desc" style="color:#b45309;margin-bottom:6px">ⓘ ${esc(t.note)}</div>` : ""}
+    <div class="tool-label">工具描述(模型所见)</div>
+    <div class="tool-desc">${esc(t.description || "(无描述)")}</div>
+    <details class="tool-instruct" style="margin-top:8px">
+      <summary>注入给大模型的系统提示语</summary>
+      <div class="tool-desc" style="margin-top:4px">${esc(t.instruct || "(无)")}</div>
+    </details>
+    <div class="tool-label">参数</div>
+    <div class="tool-params">${t.params.length ? t.params.map(paramInputHtml).join("") : '<span class="conn">无参数</span>'}</div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="btn primary" id="btn-tool-run" ${t.enabled ? "" : "disabled"}>运行</button>
+      ${t.needs_workspace && !$("tool-ws").value ? '<span class="conn" style="color:#dc2626">需要先在顶部选择 workspace</span>' : ""}
+    </div>
+    <div id="tool-result"></div>
+    ${histHtml ? `<div class="tool-history"><div class="tool-label" style="margin-top:0">最近调用</div>${histHtml}</div>` : ""}`;
+  const runBtn = $("btn-tool-run");
+  if (runBtn) runBtn.onclick = () => runTool(t);
+}
+
+async function runTool(t) {
+  const args = {};
+  document.querySelectorAll("#tool-detail [data-pname]").forEach((input) => {
+    const name = input.dataset.pname;
+    const type = input.dataset.ptype;
+    if (type === "bool") { args[name] = input.checked; return; }
+    const raw = input.value.trim();
+    if (!raw) return; // 空值不传,服务端用默认值
+    args[name] = type === "int" ? parseInt(raw, 10) : type === "float" ? parseFloat(raw) : raw;
+  });
+  const box = $("tool-result");
+  box.innerHTML = '<div class="tool-result ok">调用中…</div>';
+  try {
+    const resp = await fetch("/api/tools/call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: t.name, args, workspace_id: $("tool-ws").value || null }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      box.innerHTML = `<div class="tool-result err">✗ ${esc(data.detail || "调用失败")}</div>`;
+      return;
+    }
+    if (data.ok) {
+      box.innerHTML = `<div class="tool-result ok">✓ 成功 · ${data.elapsed_ms}ms\n${esc(JSON.stringify(data.result, null, 2))}</div>`;
+    } else {
+      box.innerHTML = `<div class="tool-result err">✗ 失败 · ${data.elapsed_ms}ms\n${esc(data.error)}</div>`;
+    }
+    toolState.history.unshift({
+      tool: t.name, ok: data.ok, elapsed: data.elapsed_ms,
+      args: JSON.stringify(args), error: data.error || "",
+      time: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="tool-result err">✗ 请求失败: ${esc(String(e))}</div>`;
+  }
+}
+
+function fillToolWsOptions() {
+  const sel = $("tool-ws");
+  const cur = sel.value;
+  const list = Object.values(state.workspaces);
+  sel.innerHTML = '<option value="">(不选 workspace)</option>' + list.map((w) =>
+    `<option value="${esc(w.id)}">${esc(w.name)} — ${esc(w.root)}</option>`).join("");
+  if (list.some((w) => w.id === cur)) sel.value = cur;
+}
+
+$("btn-tools").onclick = () => {
+  $("tool-modal").style.display = "flex";
+  fillToolWsOptions();
+  loadTools();
+};
+$("btn-tool-close").onclick = () => { $("tool-modal").style.display = "none"; };
+$("tool-modal").onclick = (e) => { if (e.target === $("tool-modal")) $("tool-modal").style.display = "none"; };
+$("tool-ws").onchange = loadTools;
+
+loadOverview();
+connectEvents();
+setInterval(loadOverview, 30000);
+</script>
+</body>
+</html>
