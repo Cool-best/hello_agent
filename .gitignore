@@ -1,0 +1,17 @@
+# 密钥与环境
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# 运行时数据(含聊天历史/用户文件,勿提交)
+sessions.json
+workspaces.json
+workspaces/
+kb_service/data/
+.dev_ws/
+
+# 知识库内容(默认排除,防私人文档误入;示例知识可单独放行)
+knowledge/*
+!knowledge/.gitkeep
